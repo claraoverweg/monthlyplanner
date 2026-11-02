@@ -44,6 +44,11 @@
   .acts button { border: none; background: none; padding: 0 3px; font-size: 13px; color: var(--muted); }
   .acts button:hover { color: var(--accent); }
   .readonly .todo .t { cursor: default; }
+  .cal:not(.readonly) .day:not(.blank) { cursor: text; }
+  .todo { cursor: default; }
+  .todo.termin { background: #fde8e8; }
+  .todo.termin .t { color: #c62828; font-weight: 600; }
+  .quick { width: 100%; margin-top: 3px; padding: 2px 4px; border: 1px solid var(--accent); border-radius: 4px; font: inherit; font-size: 13px; }
 
   aside { background: var(--wait); border: 1px solid var(--line); border-radius: 8px; padding: 10px; position: sticky; top: 12px; }
   aside h2 { font-size: 16px; margin: 0 0 6px; display: flex; justify-content: space-between; align-items: center; }
@@ -63,6 +68,8 @@
   dialog .primary { background: var(--accent); color: #fff; border-color: var(--accent); }
   dialog .hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
   dialog .row .left { margin-right: auto; }
+  dialog .check { display: flex; align-items: center; gap: 6px; color: var(--text); font-size: 14px; margin-top: 10px; }
+  dialog .check input { width: auto; }
 
   #syncStatus { font-size: 12px; color: var(--muted); }
   #syncStatus.ok { color: #3a8a4a; }
@@ -103,6 +110,7 @@
       <input id="inName" required autocomplete="off">
       <label for="inInfo">Extra-Info (optional, erscheint beim Hovern)</label>
       <textarea id="inInfo"></textarea>
+      <label class="check"><input type="checkbox" id="inTermin"> Termin (rot, über den To-dos)</label>
     </div>
     <div id="fDate">
       <label for="inDate">Datum</label>
@@ -224,13 +232,14 @@ function renderCal() {
     if (!ro) {
       const add = document.createElement('button');
       add.className = 'add'; add.textContent = '+'; add.title = 'To-do hinzufügen';
-      add.onclick = () => openDialog('new', { date: ds });
       num.append(add);
-      cell.ondblclick = e => { if (e.target === cell) openDialog('new', { date: ds }); };
+      // Klick auf eine freie Stelle im Tag öffnet das Eingabefeld
+      cell.onclick = e => { if (e.target === cell || e.target.closest('.num')) openQuick(ds); };
       makeDropTarget(cell, id => { const t = find(id); t.date = ds; t.waiting = false; });
     }
     cell.append(num);
-    state.todos.filter(t => !t.waiting && t.date === ds).forEach(t => cell.append(todoEl(t, 'day', ro)));
+    termineFirst(state.todos.filter(t => !t.waiting && t.date === ds)).forEach(t => cell.append(todoEl(t, 'day', ro)));
+    if (!ro && quick === ds) cell.append(quickInput(ds));
     cal.append(cell);
   }
 }
@@ -238,14 +247,46 @@ function renderCal() {
 function renderWait() {
   const list = $('#waitList');
   list.innerHTML = '';
-  const items = state.todos.filter(t => t.waiting);
-  if (!items.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Keine wartenden To-dos'; list.append(e); }
+  const items = termineFirst(state.todos.filter(t => t.waiting));
+  if (quick === 'wait') list.append(quickInput('wait'));
+  else if (!items.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Keine wartenden To-dos'; list.append(e); }
   items.forEach(t => list.append(todoEl(t, 'wait', false)));
+}
+
+const termineFirst = items => [...items.filter(t => t.termin), ...items.filter(t => !t.termin)];
+
+/* ---------- Schnelleingabe ---------- */
+// quick: Tag ('YYYY-MM-DD') oder 'wait', an dem gerade ein Eingabefeld offen ist.
+// Es bleibt nach Enter offen, damit man mehrere To-dos hintereinander eintippen kann.
+let quick = null;
+function openQuick(where) { quick = where; render(); }
+function closeQuick() { quick = null; render(); }
+function quickInput(where) {
+  const inp = document.createElement('input');
+  inp.className = 'quick';
+  inp.placeholder = 'To-do … oder TERMIN …';
+  inp.onclick = e => e.stopPropagation();
+  inp.onkeydown = e => {
+    if (e.key === 'Enter') {
+      const v = inp.value.trim();
+      if (!v) return closeQuick();
+      // „TERMIN Zahnarzt 14 Uhr“ → Termin „Zahnarzt 14 Uhr“
+      const m = v.match(/^termin\b[\s:]*(.*)$/i);
+      const termin = !!(m && m[1].trim());
+      state.todos.push({ id: uid(), title: termin ? m[1].trim() : v, info: '', date: where === 'wait' ? null : where, done: false, waiting: where === 'wait', termin });
+      save();
+    }
+    if (e.key === 'Escape') closeQuick();
+  };
+  // Leeres Feld schließt sich beim Wegklicken; getippter Text bleibt stehen
+  inp.onblur = () => setTimeout(() => { if (inp.isConnected && quick === where && !inp.value.trim()) closeQuick(); });
+  requestAnimationFrame(() => inp.focus());
+  return inp;
 }
 
 function todoEl(t, ctx, ro) {
   const el = document.createElement('div');
-  el.className = 'todo' + (t.done ? ' done' : '') + (t.info ? ' has-info' : '');
+  el.className = 'todo' + (t.done ? ' done' : '') + (t.info ? ' has-info' : '') + (t.termin ? ' termin' : '');
   const title = document.createElement('span');
   title.className = 't'; title.textContent = t.title;
   el.append(title);
@@ -268,8 +309,10 @@ function todoEl(t, ctx, ro) {
   acts.className = 'acts';
   const btn = (label, tip, fn) => { const b = document.createElement('button'); b.textContent = label; b.title = tip; b.onclick = e => { e.stopPropagation(); fn(); }; acts.append(b); };
   if (ctx === 'day') {
-    btn(t.done ? '↺' : '✓', t.done ? 'Wieder öffnen' : 'Erledigt', () => { t.done = !t.done; save(); });
-    btn('⏸', 'Auf die Warteliste', () => { t.waiting = true; t.done = false; save(); });
+    if (!t.termin) {
+      btn(t.done ? '↺' : '✓', t.done ? 'Wieder öffnen' : 'Erledigt', () => { t.done = !t.done; save(); });
+      btn('⏸', 'Auf die Warteliste', () => { t.waiting = true; t.done = false; save(); });
+    }
   } else {
     btn('✓', 'Bearbeitet – einem Tag zuordnen', () => openDialog('resolve', t));
   }
@@ -306,11 +349,12 @@ const dlg = $('#dlg');
 let dlgMode, dlgTodo;
 function openDialog(mode, t) {
   dlgMode = mode; dlgTodo = t;
-  $('#dlgTitle').textContent = { new: 'Neues To-do', edit: 'To-do bearbeiten', resolve: `„${t.title}“ als bearbeitet zuordnen` }[mode];
+  $('#dlgTitle').textContent = mode === 'edit' ? (t.termin ? 'Termin bearbeiten' : 'To-do bearbeiten') : `„${t.title}“ als bearbeitet zuordnen`;
   $('#fName').hidden = mode === 'resolve';
   $('#inName').required = mode !== 'resolve';
   $('#inName').value = t.title || '';
   $('#inInfo').value = t.info || '';
+  $('#inTermin').checked = !!t.termin;
   // Warteliste-Einträge brauchen beim Bearbeiten kein Datum; beim Zuordnen ist heute vorausgewählt
   $('#fDate').hidden = mode !== 'resolve' && !!t.waiting;
   $('#inDate').required = !$('#fDate').hidden;
@@ -322,11 +366,11 @@ $('#dlgCancel').onclick = () => dlg.close();
 $('#dlgForm').onsubmit = () => {
   const name = $('#inName').value.trim(), info = $('#inInfo').value.trim(), date = $('#inDate').value;
   // Während der Dialog offen war, kann eine Synchronisierung das Objekt ersetzt haben
-  if (dlgMode !== 'new') { dlgTodo = find(dlgTodo.id); if (!dlgTodo) return render(); }
-  if (dlgMode === 'new') {
-    state.todos.push({ id: uid(), title: name, info, date: date || null, done: false, waiting: !date });
-  } else if (dlgMode === 'edit') {
-    Object.assign(dlgTodo, { title: name, info });
+  dlgTodo = find(dlgTodo.id);
+  if (!dlgTodo) return render();
+  if (dlgMode === 'edit') {
+    Object.assign(dlgTodo, { title: name, info, termin: $('#inTermin').checked });
+    if (dlgTodo.termin) dlgTodo.done = false;
     if (!dlgTodo.waiting) dlgTodo.date = date;
   } else {
     Object.assign(dlgTodo, { date, waiting: false, done: true });
@@ -345,7 +389,7 @@ $('#archive').onchange = e => {
   if (!e.target.value) return $('#todayBtn').onclick();
   const [y, m] = e.target.value.split('-'); view = { y: +y, m: +m - 1 }; render();
 };
-$('#addWait').onclick = () => openDialog('new', { waiting: true });
+$('#addWait').onclick = () => openQuick('wait');
 document.addEventListener('keydown', e => {
   if (dlg.open || e.target.matches('input, textarea, select')) return;
   if (e.key === 'ArrowLeft' && !$('#prev').disabled) shift(-1);
