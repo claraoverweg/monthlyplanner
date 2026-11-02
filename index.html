@@ -1,0 +1,504 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Monatsplaner</title>
+<style>
+  :root {
+    --bg: #f5f4f0; --card: #fff; --line: #e1ded6; --text: #222; --muted: #8a877f;
+    --accent: #3a6ea5; --todo: #eaf1f8; --today: #fff6d6; --todayline: #e3c45c; --wait: #fbeee2;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text); }
+  button, input, textarea, select { font: inherit; }
+  button { cursor: pointer; border: 1px solid var(--line); background: var(--card); border-radius: 6px; padding: 4px 10px; color: var(--text); }
+  button:hover:not(:disabled) { border-color: var(--accent); }
+  button:disabled { opacity: .4; cursor: default; }
+
+  header { display: flex; align-items: center; gap: 8px; padding: 12px 16px; flex-wrap: wrap; }
+  header h1 { font-size: 20px; margin: 0 6px; min-width: 190px; text-align: center; }
+  .badge { font-size: 11px; background: #ddd; border-radius: 10px; padding: 2px 8px; font-weight: 500; vertical-align: middle; }
+  .spacer { flex: 1; }
+
+  main { display: grid; grid-template-columns: 1fr 280px; gap: 16px; padding: 0 16px 16px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+  .cal { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+  .dow { font-weight: 600; text-align: center; color: var(--muted); padding: 4px 0; }
+  .day { background: var(--card); border: 1px solid var(--line); border-radius: 6px; min-height: 110px; padding: 4px; }
+  .day.blank { background: transparent; border-color: transparent; }
+  .day.today { background: var(--today); border-color: var(--todayline); }
+  .day.weekend .num span { color: #b06060; }
+  .day.drop { outline: 2px dashed var(--accent); }
+  .num { display: flex; justify-content: space-between; align-items: center; font-weight: 600; font-size: 12px; color: var(--muted); }
+  .add { border: none; background: none; padding: 0 4px; color: var(--muted); visibility: hidden; font-size: 16px; line-height: 1; }
+  .day:hover .add { visibility: visible; }
+
+  .todo { display: flex; align-items: center; gap: 2px; padding: 2px 4px; border-radius: 4px; margin-top: 3px; background: var(--todo); }
+  .todo .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+  .todo.done .t { text-decoration: line-through; color: var(--muted); }
+  .todo.has-info .t::after { content: " ⓘ"; color: var(--muted); font-size: 11px; }
+  .acts { display: none; }
+  .todo:hover .acts { display: flex; }
+  .acts button { border: none; background: none; padding: 0 3px; font-size: 13px; color: var(--muted); }
+  .acts button:hover { color: var(--accent); }
+  .readonly .todo .t { cursor: default; }
+
+  aside { background: var(--wait); border: 1px solid var(--line); border-radius: 8px; padding: 10px; position: sticky; top: 12px; }
+  aside h2 { font-size: 16px; margin: 0 0 6px; display: flex; justify-content: space-between; align-items: center; }
+  aside .todo { background: var(--card); padding: 4px 6px; }
+  aside .from { font-size: 11px; color: var(--muted); margin-left: 4px; white-space: nowrap; }
+  aside.drop { outline: 2px dashed var(--accent); }
+  .empty { color: var(--muted); font-style: italic; padding: 6px 0; }
+
+  #tip { position: fixed; pointer-events: none; background: #333; color: #fff; padding: 6px 9px; border-radius: 6px; max-width: 280px; white-space: pre-wrap; font-size: 13px; z-index: 10; display: none; }
+
+  dialog { border: 1px solid var(--line); border-radius: 10px; padding: 16px; width: min(380px, 92vw); }
+  dialog h3 { margin: 0 0 10px; }
+  dialog label { display: block; margin: 8px 0 2px; font-size: 12px; color: var(--muted); }
+  dialog input, dialog textarea { width: 100%; padding: 6px; border: 1px solid var(--line); border-radius: 6px; }
+  dialog textarea { min-height: 70px; resize: vertical; }
+  dialog .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+  dialog .primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+  dialog .hint { font-size: 12px; color: var(--muted); margin: 4px 0 0; }
+  dialog .row .left { margin-right: auto; }
+
+  #syncStatus { font-size: 12px; color: var(--muted); }
+  #syncStatus.ok { color: #3a8a4a; }
+  #syncStatus.err { color: #b03a3a; }
+</style>
+</head>
+<body>
+
+<header>
+  <button id="prev" title="Vorheriger Monat">‹</button>
+  <h1 id="title"></h1>
+  <button id="next" title="Nächster Monat">›</button>
+  <button id="todayBtn">Heute</button>
+  <select id="archive"></select>
+  <span class="spacer"></span>
+  <span id="syncStatus"></span>
+  <button id="syncBtn" title="Mit einem GitHub-Repository synchronisieren">☁ GitHub</button>
+  <button id="exportBtn" title="Alle Daten als JSON-Datei sichern">Export</button>
+  <button id="importBtn" title="JSON-Datei laden">Import</button>
+  <input type="file" id="importFile" accept="application/json" hidden>
+</header>
+
+<main>
+  <section id="cal" class="cal"></section>
+  <aside id="wait">
+    <h2>Warteliste <button id="addWait" title="To-do direkt auf die Warteliste">+</button></h2>
+    <div id="waitList"></div>
+  </aside>
+</main>
+
+<div id="tip"></div>
+
+<dialog id="dlg">
+  <form method="dialog" id="dlgForm">
+    <h3 id="dlgTitle"></h3>
+    <div id="fName">
+      <label for="inName">Name</label>
+      <input id="inName" required autocomplete="off">
+      <label for="inInfo">Extra-Info (optional, erscheint beim Hovern)</label>
+      <textarea id="inInfo"></textarea>
+    </div>
+    <div id="fDate">
+      <label for="inDate">Datum</label>
+      <input id="inDate" type="date">
+    </div>
+    <div class="row">
+      <button type="button" id="dlgCancel">Abbrechen</button>
+      <button type="submit" class="primary">Speichern</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="syncDlg">
+  <form method="dialog" id="syncForm">
+    <h3>GitHub-Synchronisierung</h3>
+    <label for="inRepo">Repository (besitzer/name)</label>
+    <input id="inRepo" required placeholder="dein-name/monatsplaner-daten" pattern="[\w.-]+/[\w.-]+" autocomplete="off">
+    <p class="hint">Am besten ein <b>privates</b> Repository, damit niemand deine To-dos lesen kann.</p>
+    <label for="inBranch">Branch</label>
+    <input id="inBranch" required value="main" autocomplete="off">
+    <label for="inPath">Datei</label>
+    <input id="inPath" required value="planer.json" autocomplete="off">
+    <label for="inToken">Token (fine-grained, nur „Contents: Read and write“ für dieses Repository)</label>
+    <input id="inToken" type="password" required autocomplete="off">
+    <p class="hint">Der Token wird nur in diesem Browser gespeichert und nur an api.github.com gesendet.</p>
+    <div class="row">
+      <button type="button" id="syncOff" class="left">Trennen</button>
+      <button type="button" id="syncCancel">Abbrechen</button>
+      <button type="submit" class="primary">Verbinden</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const KEY = 'monatsplaner-v1';
+const MONTHS = ['Januar','Februar','März','April','Mai','Juni','Juli','August','September','Oktober','November','Dezember'];
+const DOW = ['Mo','Di','Mi','Do','Fr','Sa','So'];
+const $ = s => document.querySelector(s);
+const pad = n => String(n).padStart(2, '0');
+const iso = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+const fmtDate = s => { const [y, m, d] = s.split('-'); return `${+d}.${+m}.${y}`; };
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+
+// todo: { id, title, info, date: 'YYYY-MM-DD' | null, done: bool, waiting: bool, updated: ms }
+// deleted: { id: ms } – merkt sich Löschungen, damit sie beim Synchronisieren nicht zurückkommen
+let state = load();
+function load() {
+  try { return JSON.parse(localStorage.getItem(KEY)) || { todos: [], deleted: {} }; }
+  catch { return { todos: [], deleted: {} }; }
+}
+function persist() { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch {} }
+
+// Vergleicht mit dem letzten Stand und stempelt geänderte bzw. gelöschte To-dos mit der Uhrzeit
+const stamp = ({ updated, ...rest }) => JSON.stringify(rest);
+const snapshot = () => new Map(state.todos.map(t => [t.id, stamp(t)]));
+let snap = snapshot();
+function save() {
+  const now = Date.now();
+  state.deleted ||= {};
+  state.todos.forEach(t => { if (snap.get(t.id) !== stamp(t)) t.updated = now; });
+  snap.forEach((_, id) => { if (!find(id)) state.deleted[id] = now; });
+  snap = snapshot();
+  persist();
+  render();
+  scheduleSync();
+}
+
+function today() { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), d.getDate()); }
+let view = { y: today().getFullYear(), m: today().getMonth() };
+
+// Ein Monat wird archiviert, sobald der Folgemonat vorbei ist (September → am 1. November).
+function isArchived(y, m) { return new Date(y, m + 2, 1) <= today(); }
+
+/* ---------- Rendering ---------- */
+function render() { renderHeader(); renderCal(); renderWait(); }
+
+function renderHeader() {
+  const { y, m } = view;
+  const ro = isArchived(y, m);
+  $('#title').innerHTML = '';
+  $('#title').append(`${MONTHS[m]} ${y} `);
+  if (ro) { const b = document.createElement('span'); b.className = 'badge'; b.textContent = 'Archiv'; $('#title').append(b); }
+  const p = new Date(y, m - 1, 1);
+  $('#prev').disabled = isArchived(p.getFullYear(), p.getMonth());
+
+  // Archiv-Auswahl: alle archivierten Monate, in denen es To-dos gibt
+  const months = new Set(state.todos.filter(t => t.date && !t.waiting).map(t => t.date.slice(0, 7)));
+  const archived = [...months].filter(k => { const [yy, mm] = k.split('-'); return isArchived(+yy, +mm - 1); }).sort().reverse();
+  const sel = $('#archive');
+  sel.innerHTML = '';
+  sel.append(new Option(archived.length ? `Archiv (${archived.length})` : 'Archiv (leer)', ''));
+  archived.forEach(k => { const [yy, mm] = k.split('-'); sel.append(new Option(`${MONTHS[+mm - 1]} ${yy}`, k)); });
+  sel.value = ro ? `${y}-${pad(m + 1)}` : '';
+}
+
+function renderCal() {
+  const { y, m } = view;
+  const ro = isArchived(y, m);
+  const cal = $('#cal');
+  cal.innerHTML = '';
+  cal.classList.toggle('readonly', ro);
+  DOW.forEach(d => { const e = document.createElement('div'); e.className = 'dow'; e.textContent = d; cal.append(e); });
+
+  const offset = (new Date(y, m, 1).getDay() + 6) % 7; // Montag = 0
+  for (let i = 0; i < offset; i++) { const e = document.createElement('div'); e.className = 'day blank'; cal.append(e); }
+
+  const days = new Date(y, m + 1, 0).getDate();
+  const todayIso = iso(today());
+  for (let d = 1; d <= days; d++) {
+    const ds = `${y}-${pad(m + 1)}-${pad(d)}`;
+    const cell = document.createElement('div');
+    cell.className = 'day';
+    if (ds === todayIso) cell.classList.add('today');
+    if ((offset + d - 1) % 7 >= 5) cell.classList.add('weekend');
+
+    const num = document.createElement('div');
+    num.className = 'num';
+    const n = document.createElement('span'); n.textContent = d; num.append(n);
+    if (!ro) {
+      const add = document.createElement('button');
+      add.className = 'add'; add.textContent = '+'; add.title = 'To-do hinzufügen';
+      add.onclick = () => openDialog('new', { date: ds });
+      num.append(add);
+      cell.ondblclick = e => { if (e.target === cell) openDialog('new', { date: ds }); };
+      makeDropTarget(cell, id => { const t = find(id); t.date = ds; t.waiting = false; });
+    }
+    cell.append(num);
+    state.todos.filter(t => !t.waiting && t.date === ds).forEach(t => cell.append(todoEl(t, 'day', ro)));
+    cal.append(cell);
+  }
+}
+
+function renderWait() {
+  const list = $('#waitList');
+  list.innerHTML = '';
+  const items = state.todos.filter(t => t.waiting);
+  if (!items.length) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = 'Keine wartenden To-dos'; list.append(e); }
+  items.forEach(t => list.append(todoEl(t, 'wait', false)));
+}
+
+function todoEl(t, ctx, ro) {
+  const el = document.createElement('div');
+  el.className = 'todo' + (t.done ? ' done' : '') + (t.info ? ' has-info' : '');
+  const title = document.createElement('span');
+  title.className = 't'; title.textContent = t.title;
+  el.append(title);
+  if (ctx === 'wait' && t.date) {
+    const f = document.createElement('span'); f.className = 'from'; f.textContent = fmtDate(t.date); f.title = 'Ursprüngliches Datum';
+    el.append(f);
+  }
+  if (t.info) {
+    el.onmouseenter = e => showTip(t.info, e);
+    el.onmousemove = e => moveTip(e);
+    el.onmouseleave = hideTip;
+  }
+  if (ro) return el;
+
+  title.onclick = () => openDialog('edit', t);
+  el.draggable = true;
+  el.ondragstart = e => { hideTip(); e.dataTransfer.setData('text/plain', t.id); };
+
+  const acts = document.createElement('span');
+  acts.className = 'acts';
+  const btn = (label, tip, fn) => { const b = document.createElement('button'); b.textContent = label; b.title = tip; b.onclick = e => { e.stopPropagation(); fn(); }; acts.append(b); };
+  if (ctx === 'day') {
+    btn(t.done ? '↺' : '✓', t.done ? 'Wieder öffnen' : 'Erledigt', () => { t.done = !t.done; save(); });
+    btn('⏸', 'Auf die Warteliste', () => { t.waiting = true; t.done = false; save(); });
+  } else {
+    btn('✓', 'Bearbeitet – einem Tag zuordnen', () => openDialog('resolve', t));
+  }
+  btn('✎', 'Bearbeiten', () => openDialog('edit', t));
+  btn('✕', 'Löschen', () => { if (confirm(`„${t.title}“ löschen?`)) { state.todos = state.todos.filter(x => x !== t); save(); } });
+  el.append(acts);
+  return el;
+}
+
+const find = id => state.todos.find(t => t.id === id);
+function makeDropTarget(el, onDrop) {
+  el.ondragover = e => { e.preventDefault(); el.classList.add('drop'); };
+  el.ondragleave = () => el.classList.remove('drop');
+  el.ondrop = e => {
+    e.preventDefault(); el.classList.remove('drop');
+    const id = e.dataTransfer.getData('text/plain');
+    if (find(id)) { onDrop(id); save(); }
+  };
+}
+makeDropTarget($('#wait'), id => { const t = find(id); t.waiting = true; t.done = false; });
+
+/* ---------- Tooltip ---------- */
+const tip = $('#tip');
+function showTip(text, e) { tip.textContent = text; tip.style.display = 'block'; moveTip(e); }
+function moveTip(e) {
+  const x = Math.min(e.clientX + 14, innerWidth - tip.offsetWidth - 8);
+  const y = e.clientY + 16 + tip.offsetHeight > innerHeight ? e.clientY - tip.offsetHeight - 10 : e.clientY + 16;
+  tip.style.left = x + 'px'; tip.style.top = y + 'px';
+}
+function hideTip() { tip.style.display = 'none'; }
+
+/* ---------- Dialog ---------- */
+const dlg = $('#dlg');
+let dlgMode, dlgTodo;
+function openDialog(mode, t) {
+  dlgMode = mode; dlgTodo = t;
+  $('#dlgTitle').textContent = { new: 'Neues To-do', edit: 'To-do bearbeiten', resolve: `„${t.title}“ als bearbeitet zuordnen` }[mode];
+  $('#fName').hidden = mode === 'resolve';
+  $('#inName').required = mode !== 'resolve';
+  $('#inName').value = t.title || '';
+  $('#inInfo').value = t.info || '';
+  // Warteliste-Einträge brauchen beim Bearbeiten kein Datum; beim Zuordnen ist heute vorausgewählt
+  $('#fDate').hidden = mode !== 'resolve' && !!t.waiting;
+  $('#inDate').required = !$('#fDate').hidden;
+  $('#inDate').value = mode === 'resolve' ? iso(today()) : (t.date || '');
+  dlg.showModal();
+  (mode === 'resolve' ? $('#inDate') : $('#inName')).focus();
+}
+$('#dlgCancel').onclick = () => dlg.close();
+$('#dlgForm').onsubmit = () => {
+  const name = $('#inName').value.trim(), info = $('#inInfo').value.trim(), date = $('#inDate').value;
+  // Während der Dialog offen war, kann eine Synchronisierung das Objekt ersetzt haben
+  if (dlgMode !== 'new') { dlgTodo = find(dlgTodo.id); if (!dlgTodo) return render(); }
+  if (dlgMode === 'new') {
+    state.todos.push({ id: uid(), title: name, info, date: date || null, done: false, waiting: !date });
+  } else if (dlgMode === 'edit') {
+    Object.assign(dlgTodo, { title: name, info });
+    if (!dlgTodo.waiting) dlgTodo.date = date;
+  } else {
+    Object.assign(dlgTodo, { date, waiting: false, done: true });
+    const d = new Date(date + 'T00:00');
+    view = { y: d.getFullYear(), m: d.getMonth() };
+  }
+  save();
+};
+
+/* ---------- Navigation ---------- */
+function shift(delta) { const d = new Date(view.y, view.m + delta, 1); view = { y: d.getFullYear(), m: d.getMonth() }; render(); }
+$('#prev').onclick = () => shift(-1);
+$('#next').onclick = () => shift(1);
+$('#todayBtn').onclick = () => { view = { y: today().getFullYear(), m: today().getMonth() }; render(); };
+$('#archive').onchange = e => {
+  if (!e.target.value) return $('#todayBtn').onclick();
+  const [y, m] = e.target.value.split('-'); view = { y: +y, m: +m - 1 }; render();
+};
+$('#addWait').onclick = () => openDialog('new', { waiting: true });
+document.addEventListener('keydown', e => {
+  if (dlg.open || e.target.matches('input, textarea, select')) return;
+  if (e.key === 'ArrowLeft' && !$('#prev').disabled) shift(-1);
+  if (e.key === 'ArrowRight') shift(1);
+});
+
+/* ---------- Export / Import ---------- */
+$('#exportBtn').onclick = () => {
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([JSON.stringify(state, null, 2)], { type: 'application/json' }));
+  a.download = `monatsplaner-${iso(today())}.json`;
+  a.click();
+};
+$('#importBtn').onclick = () => $('#importFile').click();
+$('#importFile').onchange = async e => {
+  const f = e.target.files[0]; e.target.value = '';
+  if (!f) return;
+  try {
+    const data = JSON.parse(await f.text());
+    if (!Array.isArray(data.todos)) throw 0;
+    if (confirm(`${data.todos.length} To-dos laden? Die aktuellen Daten werden ersetzt.`)) { state = { todos: data.todos, deleted: state.deleted || {} }; save(); }
+  } catch { alert('Die Datei ist keine gültige Planer-Datei.'); }
+};
+
+/* ---------- GitHub-Synchronisierung ---------- */
+// Die Daten liegen als JSON-Datei in einem GitHub-Repository und werden über die Contents-API gelesen und geschrieben.
+const CFG_KEY = 'monatsplaner-github';
+let cfg = (() => { try { return JSON.parse(localStorage.getItem(CFG_KEY)); } catch { return null; } })();
+let remoteSha = null, syncTimer = null, syncing = false, syncAgain = false;
+
+const b64enc = s => {
+  const b = new TextEncoder().encode(s);
+  let bin = '';
+  for (let i = 0; i < b.length; i += 0x8000) bin += String.fromCharCode(...b.subarray(i, i + 0x8000));
+  return btoa(bin);
+};
+const b64dec = s => new TextDecoder().decode(Uint8Array.from(atob(s.replace(/\s/g, '')), c => c.charCodeAt(0)));
+
+function setStatus(text, cls = '') { const s = $('#syncStatus'); s.textContent = text; s.className = cls; }
+
+// Pro To-do gewinnt die neuere Version; Löschungen gewinnen gegen ältere Änderungen
+function merge(a, b) {
+  const deleted = { ...a.deleted };
+  for (const [id, ts] of Object.entries(b.deleted || {})) deleted[id] = Math.max(deleted[id] || 0, ts);
+  const byId = new Map();
+  for (const t of [...a.todos, ...b.todos]) {
+    const o = byId.get(t.id);
+    if (!o || (t.updated || 0) > (o.updated || 0)) byId.set(t.id, t);
+  }
+  const cutoff = Date.now() - 90 * 864e5;
+  for (const id in deleted) if (deleted[id] < cutoff) delete deleted[id];
+  return { todos: [...byId.values()].filter(t => !(deleted[t.id] >= (t.updated || 0))), deleted };
+}
+const canon = s => JSON.stringify([
+  [...s.todos].sort((x, y) => x.id < y.id ? -1 : 1),
+  Object.entries(s.deleted || {}).sort()
+]);
+
+function gh(method, body) {
+  const path = cfg.path.split('/').map(encodeURIComponent).join('/');
+  const url = `https://api.github.com/repos/${cfg.repo}/contents/${path}` + (method === 'GET' ? `?ref=${encodeURIComponent(cfg.branch)}` : '');
+  return fetch(url, {
+    method, cache: 'no-store',
+    headers: { Authorization: `Bearer ${cfg.token}`, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' },
+    body: body && JSON.stringify(body)
+  });
+}
+async function ghError(res) {
+  const msg = { 401: 'Token ungültig oder abgelaufen', 403: 'Token hat keine Schreibrechte', 404: 'Repository oder Branch nicht gefunden' }[res.status];
+  return new Error(msg || `GitHub-Fehler ${res.status}`);
+}
+async function pull() {
+  const res = await gh('GET');
+  if (res.status === 404) {
+    // Datei fehlt noch → wird beim ersten Speichern angelegt. Fehlt das ganze Repo, meldet der PUT den Fehler.
+    remoteSha = null; return null;
+  }
+  if (!res.ok) throw await ghError(res);
+  const j = await res.json();
+  remoteSha = j.sha;
+  return JSON.parse(b64dec(j.content));
+}
+async function push() {
+  const res = await gh('PUT', {
+    message: `Planer aktualisiert (${new Date().toLocaleString('de-DE')})`,
+    content: b64enc(JSON.stringify(state, null, 1)),
+    branch: cfg.branch,
+    ...(remoteSha && { sha: remoteSha })
+  });
+  if (res.status === 409 || res.status === 422) return false; // jemand anderes hat inzwischen gespeichert
+  if (!res.ok) throw await ghError(res);
+  remoteSha = (await res.json()).content.sha;
+  return true;
+}
+
+async function syncNow() {
+  clearTimeout(syncTimer); syncTimer = null;
+  if (!cfg) return;
+  if (syncing) { syncAgain = true; return; }
+  syncing = true;
+  setStatus('synchronisiere …');
+  try {
+    let done = false;
+    for (let attempt = 0; attempt < 3 && !done; attempt++) {
+      const remote = await pull();
+      const merged = remote ? merge(state, { todos: remote.todos || [], deleted: remote.deleted || {} }) : state;
+      if (canon(merged) !== canon(state)) { state = merged; snap = snapshot(); persist(); render(); }
+      done = (remote && canon(merged) === canon(remote)) || await push();
+    }
+    if (!done) throw new Error('Konflikt – bitte neu laden');
+    setStatus(`✓ synchronisiert ${new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })}`, 'ok');
+  } catch (e) {
+    setStatus(`⚠ ${e.message === 'Failed to fetch' ? 'offline' : e.message}`, 'err');
+  }
+  syncing = false;
+  if (syncAgain) { syncAgain = false; syncNow(); }
+}
+function scheduleSync() {
+  if (!cfg) return;
+  setStatus('ungespeichert …');
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(syncNow, 1500);
+}
+
+// Beim Zurückkehren zum Tab neue Änderungen von anderen Geräten holen
+document.addEventListener('visibilitychange', () => { if (!document.hidden) syncNow(); });
+addEventListener('beforeunload', e => { if (syncTimer || syncing) { syncNow(); e.preventDefault(); } });
+
+const syncDlg = $('#syncDlg');
+$('#syncBtn').onclick = () => {
+  $('#inRepo').value = cfg?.repo || '';
+  $('#inBranch').value = cfg?.branch || 'main';
+  $('#inPath').value = cfg?.path || 'planer.json';
+  $('#inToken').value = cfg?.token || '';
+  $('#syncOff').hidden = !cfg;
+  syncDlg.showModal();
+};
+$('#syncCancel').onclick = () => syncDlg.close();
+$('#syncOff').onclick = () => {
+  cfg = null; remoteSha = null;
+  try { localStorage.removeItem(CFG_KEY); } catch {}
+  setStatus('');
+  syncDlg.close();
+};
+$('#syncForm').onsubmit = () => {
+  cfg = { repo: $('#inRepo').value.trim(), branch: $('#inBranch').value.trim(), path: $('#inPath').value.trim(), token: $('#inToken').value.trim() };
+  try { localStorage.setItem(CFG_KEY, JSON.stringify(cfg)); } catch {}
+  remoteSha = null;
+  syncNow();
+};
+
+render();
+syncNow();
+</script>
+</body>
+</html>
